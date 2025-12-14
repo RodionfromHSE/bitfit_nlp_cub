@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Grid search runner for hyperparameter tuning."""
 
+import argparse
 import subprocess
-import sys
 from itertools import product
 
 
@@ -64,8 +64,6 @@ def run_lr_sweep(task: str, method: str, lrs: list[float], tracker: str = "none"
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description="Run experiment sweeps")
     parser.add_argument("--mode", choices=["full", "lr", "quick"], default="quick")
     parser.add_argument("--tracker", default="none")

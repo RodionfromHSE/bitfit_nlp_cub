@@ -1,7 +1,11 @@
 import torch
 from peft import LoraConfig, get_peft_model
 from torch import nn
-from transformers import AutoModelForSequenceClassification, PreTrainedModel
+from transformers import (
+    AutoModelForQuestionAnswering,
+    AutoModelForSequenceClassification,
+    PreTrainedModel,
+)
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 MODEL_NAME = "bert-base-uncased"
@@ -23,9 +27,36 @@ def create_model(method: str, num_labels: int, method_cfg: dict | None = None) -
         raise ValueError(f"Unknown method: {method}")
 
 
+def create_qa_model(method: str) -> nn.Module:
+    """Factory function to create a QA model with the specified method."""
+    if method == "full_ft":
+        return _create_qa_full_ft()
+    elif method == "bitfit":
+        return _create_qa_bitfit()
+    else:
+        raise ValueError(f"Unknown method for QA: {method}")
+
+
 def _create_full_ft(num_labels: int) -> PreTrainedModel:
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=num_labels)
+    return AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=num_labels)
+
+
+def _create_qa_full_ft() -> PreTrainedModel:
+    return AutoModelForQuestionAnswering.from_pretrained(MODEL_NAME)
+
+
+def _create_qa_bitfit() -> PreTrainedModel:
+    model = AutoModelForQuestionAnswering.from_pretrained(MODEL_NAME)
+    _freeze_except_bias_and_qa_head(model)
     return model
+
+
+def _freeze_except_bias_and_qa_head(model: nn.Module) -> None:
+    for name, param in model.named_parameters():
+        if "bias" in name or "qa_outputs" in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
 
 
 def _create_bitfit(num_labels: int) -> PreTrainedModel:
