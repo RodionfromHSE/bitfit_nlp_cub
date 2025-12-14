@@ -1,0 +1,4 @@
+backend: wandb
+project: bitfit-nlp-cub
+entity: null
+

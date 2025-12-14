@@ -1,0 +1,11 @@
+name: lora
+lr: 2e-4
+weight_decay: 0.01
+lr_grid: [1e-4, 2e-4, 5e-4]
+r: 8
+lora_alpha: 16
+lora_dropout: 0.1
+target_modules:
+  - query
+  - value
+

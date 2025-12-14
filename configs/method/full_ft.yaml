@@ -1,0 +1,5 @@
+name: full_ft
+lr: 2e-5
+weight_decay: 0.01
+lr_grid: [1e-5, 2e-5, 3e-5, 5e-5]
+

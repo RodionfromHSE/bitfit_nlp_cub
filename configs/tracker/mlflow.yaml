@@ -1,0 +1,4 @@
+backend: mlflow
+tracking_uri: ./mlruns
+experiment_name: bitfit-nlp-cub
+

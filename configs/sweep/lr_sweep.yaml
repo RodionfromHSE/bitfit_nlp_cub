@@ -1,0 +1,6 @@
+# example: uv run python scripts/train.py --multirun method.lr=1e-4,2e-4,5e-4
+hydra:
+  sweeper:
+    params:
+      method.lr: ${method.lr_grid}
+

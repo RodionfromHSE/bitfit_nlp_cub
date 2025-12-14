@@ -1,0 +1,5 @@
+name: bitfit
+lr: 5e-4
+weight_decay: 0.01
+lr_grid: [1e-4, 4e-4, 7e-4, 1e-3]
+

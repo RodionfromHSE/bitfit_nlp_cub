@@ -1,0 +1,7 @@
+name: sst2
+dataset: glue
+num_labels: 2
+metric: accuracy
+sentence1_key: sentence
+sentence2_key: null
+

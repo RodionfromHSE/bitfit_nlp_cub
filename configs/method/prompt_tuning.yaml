@@ -1,0 +1,6 @@
+name: prompt_tuning
+lr: 5e-4
+weight_decay: 0.01
+lr_grid: [1e-4, 2e-4, 5e-4, 1e-3]
+num_virtual_tokens: 20
+
