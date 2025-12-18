@@ -15,8 +15,14 @@ class ExperimentTracker(Protocol):
 
 
 class WandbTracker:
-    def __init__(self, project: str, entity: str | None = None, config: dict | None = None):
-        self.run = wandb.init(project=project, entity=entity, config=config)
+    def __init__(
+        self,
+        project: str,
+        entity: str | None = None,
+        config: dict | None = None,
+        run_name: str | None = None,
+    ):
+        self.run = wandb.init(project=project, entity=entity, config=config, name=run_name)
 
     def log_params(self, params: dict) -> None:
         wandb.config.update(params, allow_val_change=True)
@@ -34,10 +40,16 @@ class WandbTracker:
 
 
 class MLflowTracker:
-    def __init__(self, tracking_uri: str, experiment_name: str, config: dict | None = None):
+    def __init__(
+        self,
+        tracking_uri: str,
+        experiment_name: str,
+        config: dict | None = None,
+        run_name: str | None = None,
+    ):
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(experiment_name)
-        self.run = mlflow.start_run()
+        self.run = mlflow.start_run(run_name=run_name)
         if config:
             self.log_params(config)
 
@@ -73,18 +85,21 @@ class NoOpTracker:
 
 def create_tracker(tracker_cfg: DictConfig, full_config: DictConfig) -> ExperimentTracker:
     config_dict = OmegaConf.to_container(full_config, resolve=True)
+    run_name = _build_run_name(full_config)
 
     if tracker_cfg.backend == "wandb":
         return WandbTracker(
             project=tracker_cfg.project,
             entity=tracker_cfg.get("entity"),
             config=config_dict,
+            run_name=run_name,
         )
     elif tracker_cfg.backend == "mlflow":
         return MLflowTracker(
             tracking_uri=tracker_cfg.tracking_uri,
             experiment_name=tracker_cfg.experiment_name,
             config=config_dict,
+            run_name=run_name,
         )
     elif tracker_cfg.backend == "none":
         return NoOpTracker()
@@ -102,3 +117,20 @@ def _flatten_dict(d: dict, parent_key: str = "", sep: str = ".") -> dict:
             items.append((new_key, v))
     return dict(items)
 
+
+def _build_run_name(cfg: DictConfig) -> str:
+    parts = []
+    for path in ("task.dataset", "task.name", "method.name"):
+        value = OmegaConf.select(cfg, path, default=None)
+        if value:
+            parts.append(value)
+
+    lr = OmegaConf.select(cfg, "method.lr", default=None)
+    if lr is not None:
+        parts.append(f"lr{lr}")
+
+    seed = OmegaConf.select(cfg, "training.seed", default=None)
+    if seed is not None:
+        parts.append(f"seed{seed}")
+
+    return "-".join(str(p) for p in parts if p is not None)
