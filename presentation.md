@@ -82,6 +82,39 @@ style: |
 
 ---
 
+# BitFit: The Core Idea
+
+## Fine-tune only the bias terms
+
+For a linear layer: **y = Wx + b** → **y' = Wx + (b + Δb)**
+
+You're not learning new directions (that requires changing W).  
+You're **shifting** the existing features produced by the pretrained model.
+
+**Why "just shifting" works:**
+- Bias = "weight on a constant feature" — shifts get mixed by frozen W across layers
+- With nonlinearities (ReLU/GELU), bias shift changes **which neurons are active**
+- Effectively "chooses a different subnetwork" inside the frozen model
+
+---
+
+# BitFit: Why It's Powerful
+
+## In Attention: bias shifts Q/K/V globally
+
+Attention scores include bias-dependent terms that add **global preferences** and **systematic tilts** without touching W_q, W_k.
+
+## "Most of what you need is already there"
+
+Pretraining gives you rich features. Downstream tasks mainly need:
+- **Recalibration** (shifting decision boundaries)
+- **Distribution-shift corrections**
+- **Re-weighting existing features** (not inventing new ones)
+
+Bias-only tuning is a very parameter-efficient way to do exactly that.
+
+---
+
 # Memory Efficiency
 
 | Method | Memory (GB) | Relative to Full FT |
