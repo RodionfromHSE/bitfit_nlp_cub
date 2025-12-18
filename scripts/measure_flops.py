@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import pandas as pd
 import torch
 from fvcore.nn import FlopCountAnalysis
 from transformers import AutoTokenizer
@@ -30,22 +32,43 @@ def count_trainable_params(model: torch.nn.Module) -> tuple[int, int]:
     return trainable, total
 
 
-def measure_forward_flops(model: torch.nn.Module, inputs: dict) -> int:
-    """Measure forward pass FLOPs using fvcore."""
-    model.eval()
-    with torch.no_grad():
-        flops = FlopCountAnalysis(model, (inputs["input_ids"], inputs["attention_mask"]))
-        return flops.total()
 
 
-def measure_backward_flops_estimate(forward_flops: int, trainable_ratio: float) -> int:
-    """Estimate backward pass FLOPs based on trainable parameter ratio.
+def measure_flops_with_profiler(model: torch.nn.Module, inputs: dict) -> tuple[int, int]:
+    """Measure forward and backward FLOPs using torch.profiler."""
+    model.train()
+    model.zero_grad()
     
-    For full backward, FLOPs ≈ 2× forward (gradient computation + accumulation).
-    For partial backward, scales with trainable params.
-    """
-    full_backward = forward_flops * 2
-    return int(full_backward * trainable_ratio)
+    input_ids = inputs["input_ids"]
+    attention_mask = inputs["attention_mask"]
+    labels = torch.zeros(input_ids.shape[0], dtype=torch.long)
+    
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU],
+        with_flops=True,
+        record_shapes=True,
+    ) as prof:
+        # forward
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        loss = outputs.loss
+    
+    forward_flops = sum(e.flops for e in prof.key_averages() if e.flops > 0)
+    
+    model.zero_grad()
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU],
+        with_flops=True,
+        record_shapes=True,
+    ) as prof:
+        # forward + backward
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+        loss = outputs.loss
+        loss.backward()
+    
+    total_flops = sum(e.flops for e in prof.key_averages() if e.flops > 0)
+    backward_flops = total_flops - forward_flops
+    
+    return forward_flops, backward_flops
 
 
 def create_sample_input(tokenizer, seq_length: int = 128) -> dict:
@@ -59,6 +82,42 @@ def create_sample_input(tokenizer, seq_length: int = 128) -> dict:
         return_tensors="pt",
     )
     return inputs
+
+
+def create_flops_comparison_graph(df: pd.DataFrame, output_dir: Path) -> None:
+    """Create bar chart comparing FLOPs across methods."""
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    methods = df["method"].tolist()
+    forward = df["forward_gflops"].tolist()
+    backward = df["backward_gflops"].tolist()
+    
+    x = range(len(methods))
+    width = 0.35
+    
+    bars1 = ax.bar([i - width/2 for i in x], forward, width, label="Forward", color="#2ecc71")
+    bars2 = ax.bar([i + width/2 for i in x], backward, width, label="Backward", color="#e74c3c")
+    
+    ax.set_xlabel("Method", fontsize=12)
+    ax.set_ylabel("GFLOPs", fontsize=12)
+    ax.set_title("FLOPs Comparison per Sample (Seq Length = 128)", fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(methods, rotation=15, ha="right")
+    ax.legend()
+    
+    for bar in bars1 + bars2:
+        height = bar.get_height()
+        ax.annotate(f"{height:.1f}",
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=9)
+    
+    plt.tight_layout()
+    fig.savefig(output_dir / "flops_comparison.png", dpi=150, bbox_inches="tight")
+    fig.savefig(output_dir / "flops_comparison.pdf", bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved FLOPs comparison graph to {output_dir}/flops_comparison.{{png,pdf}}")
 
 
 def main():
@@ -78,36 +137,41 @@ def main():
         trainable, total = count_trainable_params(model)
         trainable_ratio = trainable / total
         
-        forward_flops = measure_forward_flops(model, inputs)
-        backward_flops = measure_backward_flops_estimate(forward_flops, trainable_ratio)
-        total_flops = forward_flops + backward_flops
+        # measure with profiler (actual)
+        fwd_prof, bwd_prof = measure_flops_with_profiler(model, inputs)
         
         result = {
             "method": METHOD_DISPLAY[method],
             "trainable_params": trainable,
             "total_params": total,
             "trainable_pct": round(trainable_ratio * 100, 4),
-            "forward_gflops": round(forward_flops / 1e9, 2),
-            "backward_gflops_est": round(backward_flops / 1e9, 2),
-            "total_gflops": round(total_flops / 1e9, 2),
+            "forward_gflops": round(fwd_prof / 1e9, 2),
+            "backward_gflops": round(bwd_prof / 1e9, 2),
+            "total_gflops": round((fwd_prof + bwd_prof) / 1e9, 2),
         }
         results.append(result)
         
         print(f"  Trainable: {trainable:,} / {total:,} ({trainable_ratio*100:.3f}%)")
-        print(f"  Forward:  {forward_flops/1e9:.2f} GFLOPs")
-        print(f"  Backward: {backward_flops/1e9:.2f} GFLOPs (estimated)")
-        print(f"  Total:    {total_flops/1e9:.2f} GFLOPs")
+        print(f"  Forward (profiler):  {fwd_prof/1e9:.2f} GFLOPs")
+        print(f"  Backward (profiler): {bwd_prof/1e9:.2f} GFLOPs")
+        print(f"  Total:    {(fwd_prof + bwd_prof)/1e9:.2f} GFLOPs")
         print()
         
         del model
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
-    output_path = Path("outputs/flops_measured.json")
-    output_path.parent.mkdir(exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+    output_dir = Path("outputs")
+    output_dir.mkdir(exist_ok=True)
     
-    print(f"Results saved to {output_path}")
+    with open(output_dir / "flops_measured.json", "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"Results saved to {output_dir}/flops_measured.json")
+    
+    df = pd.DataFrame(results)
+    df.to_csv(output_dir / "flops_table.csv", index=False)
+    print(f"Table saved to {output_dir}/flops_table.csv")
+    
+    create_flops_comparison_graph(df, output_dir)
     
     print("\n" + "=" * 70)
     print("SUMMARY TABLE")
@@ -115,7 +179,7 @@ def main():
     print(f"{'Method':<16} {'Forward (GFLOPs)':<18} {'Backward (GFLOPs)':<18} {'Total (GFLOPs)':<15}")
     print("-" * 70)
     for r in results:
-        print(f"{r['method']:<16} {r['forward_gflops']:<18.2f} {r['backward_gflops_est']:<18.2f} {r['total_gflops']:<15.2f}")
+        print(f"{r['method']:<16} {r['forward_gflops']:<18.2f} {r['backward_gflops']:<18.2f} {r['total_gflops']:<15.2f}")
     print("=" * 70)
 
 
