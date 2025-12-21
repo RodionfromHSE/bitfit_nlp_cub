@@ -43,6 +43,16 @@ style: |
   strong {
     color: #b83b5e;
   }
+  .peft-best {
+    color: #2e8b57;
+  }
+  .peft-best strong {
+    color: inherit;
+  }
+  .best-overall {
+    color: #b83b5e;
+    font-weight: normal;
+  }
   code {
     background-color: #1b262c;
     color: #bbe1fa;
@@ -388,9 +398,9 @@ Initial runs used **fixed epochs** → small datasets got too few steps
 
 | Method | SST-2 (Acc) | MRPC (F1) | RTE (Acc) | Avg | Train % |
 |--------|-------------|-----------|-----------|-----|---------|
-| **Full FT** | **92.09%** | **90.02%** | **67.51%** | **83.21%** | 100% |
-| LoRA | 92.20% | 88.32% | 61.01% | 80.51% | 0.27% |
-| BitFit | 90.60% | 88.01% | 61.37% | 79.99% | 0.095% |
+| **Full FT** | <span class="best-overall">92.09%</span> | **90.02%** | **67.51%** | **83.21%** | 100% |
+| LoRA | <span class="peft-best"><strong>92.20%</strong></span> | <span class="peft-best">88.32%</span> | 61.01% | <span class="peft-best">80.51%</span> | 0.27% |
+| BitFit | 90.60% | 88.01% | <span class="peft-best">61.37%</span> | 79.99% | 0.095% |
 | BitFit Subset | 90.25% | 81.94% | 57.04% | 76.41% | 0.043% |
 | Prompt Tuning | 88.19% | 81.79% | 57.40% | 75.79% | 0.015% |
 
