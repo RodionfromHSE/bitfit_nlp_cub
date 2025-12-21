@@ -2,147 +2,392 @@
 marp: true
 theme: default
 paginate: true
-backgroundColor: #ffffff
-color: #222222
+backgroundColor: #fafbfc
+color: #1a1a2e
 style: |
   section {
-    font-family: 'Segoe UI', Tahoma, sans-serif;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 24px;
+    overflow-y: auto;
   }
   h1 {
-    color: #1e3a5f;
+    color: #0f4c75;
+    font-size: 1.8em;
   }
   h2 {
-    color: #2d5986;
+    color: #3282b8;
+    font-size: 1.3em;
+    border-bottom: 2px solid #bbe1fa;
+    padding-bottom: 6px;
+    margin-top: 0.3em;
+  }
+  h3 {
+    color: #1b262c;
   }
   table {
     font-size: 0.65em;
     width: 100%;
+    margin: 10px 0;
   }
   th {
-    background-color: #1e3a5f;
+    background-color: #0f4c75;
     color: white;
+    padding: 6px;
   }
   td {
-    color: #222222;
+    padding: 4px 6px;
+  }
+  tr:nth-child(even) {
+    background-color: #e8f4f8;
   }
   strong {
-    color: #c0392b;
+    color: #b83b5e;
+  }
+  code {
+    background-color: #1b262c;
+    color: #bbe1fa;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8em;
+  }
+  pre {
+    background-color: #1b262c;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 0.85em;
+    margin: 8px 0;
+  }
+  pre code {
+    color: #bbe1fa;
+    background: none;
   }
   blockquote {
-    border-left: 4px solid #2d5986;
-    background-color: #f0f4f8;
-    padding: 10px 20px;
+    border-left: 4px solid #3282b8;
+    background-color: #e8f4f8;
+    padding: 10px 16px;
+    margin: 10px 0;
+    font-style: italic;
   }
   img[alt~="center"] {
     display: block;
     margin: 0 auto;
   }
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  ul {
+    line-height: 1.5;
+    margin: 8px 0;
+  }
+  li {
+    margin-bottom: 5px;
+  }
+  p {
+    margin: 8px 0;
+  }
 ---
 
-# BitFit & PEFT Experiments
+# BitFit & PEFT Experiments on BERT
 
-## Comparing Parameter-Efficient Fine-Tuning Methods
+### Comparing Parameter-Efficient Fine-Tuning Methods vs Full Fine-Tuning
 
-**Base Model:** BERT-base-uncased (109M parameters)  
-**Tasks:** GLUE (SST-2, MRPC, RTE) & SQuAD v1.1
-
----
-
-# Agenda
-
-1. **Part 0:** Performance Indicators & Metrics
-2. **Part I:** GLUE Experiments
-3. **Part II:** SQuAD Data-Size Experiments
-4. **Conclusions**
+**Datasets:** GLUE (SST-2, MRPC, RTE) + SQuAD v1.1 Low-Data
 
 ---
 
-# Part 0: Performance Indicators
+# Motivation: Why PEFT?
 
-## Metrics Used
+## Practical Limitations of Full Fine-Tuning
 
-| Task Type | Primary Metric | Secondary Metric |
-|-----------|---------------|------------------|
-| SST-2 (Sentiment) | Accuracy | - |
-| MRPC (Paraphrase) | F1 Score | Accuracy |
-| RTE (Entailment) | Accuracy | - |
-| SQuAD (QA) | Exact Match (EM) | F1 Score |
+| Challenge | Full FT Problem | PEFT Solution |
+|-----------|-----------------|---------------|
+| **Memory** | Store all gradients | ~50% reduction |
+| **Storage** | 1 model per task | Shared base + small adapters |
+| **Low-data** | Overfitting risk | Built-in regularization |
+| **Multi-task** | N × full models | N × tiny deltas |
+
+## Research Question
+
+> How much performance do we lose by training <1% of parameters?
+
+---
+
+# Contributions
+
+## What We Actually Did
+
+1. **Unified codebase** — all PEFT methods in one framework
+   - Hydra configs, W&B tracking, reproducible seeds
+
+2. **GLUE benchmark** — 5 methods × 3 tasks
+   - Full FT, BitFit, BitFit-subset, LoRA, Prompt Tuning
+
+3. **SQuAD low-data scaling** — hypothesis testing
+   - Does BitFit beat Full FT when data is scarce?
+
+4. **Fixed methodology** — step-based training for fair comparison
+
+---
+
+<!-- _class: lead -->
+# Part 1: Methods
 
 ---
 
 # Methods Overview
 
-| Method | Trainable Params | % of Total | Description |
-|--------|-----------------|------------|-------------|
-| Full FT | 109,483,778 | 100% | All parameters |
+| Method | Trainable Params | % of Total | What's Trained |
+|--------|------------------|------------|----------------|
+| Full FT | 109,483,778 | 100% | Everything |
 | BitFit | 104,450 | **0.095%** | All bias terms + classifier |
-| BitFit Subset | 47,618 | **0.043%** | Query bias + intermediate dense bias + classifier |
+| BitFit Subset | 47,618 | **0.043%** | Query bias + intermediate bias + clf |
 | LoRA (r=8) | 296,450 | **0.27%** | Low-rank adapters on Q,V |
 | Prompt Tuning | 16,898 | **0.015%** | 20 virtual tokens + classifier |
 
----
-
-# BitFit: The Core Idea
-
-## Fine-tune only the bias terms
-
-For a linear layer: **y = Wx + b** → **y' = Wx + (b + Δb)**
-
-You're not learning new directions (that requires changing W).  
-You're **shifting** the existing features produced by the pretrained model.
-
-**Why "just shifting" works:**
-- Bias = "weight on a constant feature" — shifts get mixed by frozen W across layers
-- With nonlinearities (ReLU/GELU), bias shift changes **which neurons are active**
-- Effectively "chooses a different subnetwork" inside the frozen model
+**Base:** BERT-base-uncased (109M params)
 
 ---
 
-# BitFit: Why It's Powerful
+# Implementation: Full Fine-Tuning
 
-## In Attention: bias shifts Q/K/V globally
+## How It Works
 
-Attention scores include bias-dependent terms that add **global preferences** and **systematic tilts** without touching W_q, W_k.
+All parameters are trainable — standard transfer learning
 
-## "Most of what you need is already there"
+```python
+model = AutoModelForSequenceClassification.from_pretrained(
+    "bert-base-uncased", num_labels=num_labels
+)
+# All 109M parameters get gradients
+```
 
-Pretraining gives you rich features. Downstream tasks mainly need:
-- **Recalibration** (shifting decision boundaries)
-- **Distribution-shift corrections**
-- **Re-weighting existing features** (not inventing new ones)
+## Our Configuration
 
-Bias-only tuning is a very parameter-efficient way to do exactly that.
-
----
-
-# Memory Efficiency
-
-| Method | Memory (GB) | Relative to Full FT |
-|--------|-------------|---------------------|
-| Full FT | ~2.1-2.2 | 1.0x |
-| BitFit | ~1.0-1.1 | **~0.5x** |
-| BitFit Subset | ~1.0 | **~0.5x** |
-| LoRA | ~0.9-1.2 | **~0.5x** |
-| Prompt Tuning | ~0.9-1.2 | **~0.5x** |
-
-All PEFT methods achieve **~50% memory reduction** compared to Full FT
+| Hyperparameter | Value |
+|----------------|-------|
+| Learning rate | `2e-5` |
+| Weight decay | `0.01` |
+| Optimizer | AdamW |
+| Scheduler | Linear warmup (10%) |
 
 ---
 
-# Part I: GLUE Experiments
+# Implementation: BitFit
 
-## Experiment Setup
+## Core Idea
 
-- **Tasks:** SST-2, MRPC, RTE
-- **Methods:** Full FT, BitFit, BitFit Subset, LoRA, Prompt Tuning
-- **Training:** 3 epochs, batch size 16, seed 42
+**Only bias terms are trainable** — freeze all weight matrices
+
+For linear: `y = Wx + b` → only `b` gets gradients
+
+```python
+def _freeze_except_bias_and_classifier(model):
+    for name, param in model.named_parameters():
+        if "bias" in name or "classifier" in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+```
+
+## Why It Works
+
+- Biases **shift activations** → change which features fire
+- Effectively "selects a subnetwork" inside frozen model
+- Pretrained features already capture most of what's needed
 
 ---
 
-# Part I: Results
+# Implementation: BitFit Subset
 
-| Method | SST-2 (Acc) | MRPC (F1) | RTE (Acc) | Avg | Trainable % |
-|--------|-------------|-----------|-----------|-----|-------------|
+## Even More Aggressive
+
+Only **2 specific biases** per layer + classifier:
+
+```python
+def _freeze_except_bitfit_subset_and_classifier(model):
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    for name, param in model.named_parameters():
+        if "classifier" in name:
+            param.requires_grad = True
+        elif "attention.self.query.bias" in name:  # attention steering
+            param.requires_grad = True
+        elif "intermediate.dense.bias" in name:    # FFN activation
+            param.requires_grad = True
+```
+
+**Rationale:** Query bias affects attention patterns; intermediate bias affects FFN gating
+
+---
+
+# Implementation: LoRA
+
+## Low-Rank Adaptation
+
+Inject trainable rank-`r` matrices alongside frozen weights:
+
+$$W' = W + BA \quad \text{where } B \in \mathbb{R}^{d \times r}, A \in \mathbb{R}^{r \times k}$$
+
+```python
+lora_config = LoraConfig(
+    r=8,                              # rank
+    lora_alpha=16,                    # scaling
+    lora_dropout=0.1,
+    target_modules=["query", "value"], # where to inject
+    bias="none",                       # no bias adaptation
+    task_type="SEQ_CLS",
+)
+model = get_peft_model(base_model, lora_config)
+```
+
+**Why Q,V:** Empirically best for BERT; attention is the core mechanism
+
+---
+
+# Implementation: Prompt Tuning
+
+## Learned Soft Prompts
+
+Prepend `k` **learnable embeddings** to input sequence:
+
+```python
+class SoftPromptModel(nn.Module):
+    def __init__(self, base_model, num_virtual_tokens=20):
+        self.soft_prompt = nn.Embedding(num_virtual_tokens, hidden_size)
+        nn.init.normal_(self.soft_prompt.weight, std=0.02)
+        self._freeze_base_except_classifier()
+    
+    def forward(self, input_ids, ...):
+        input_embeds = self.base_model.bert.embeddings(input_ids)
+        prompt_embeds = self.soft_prompt.weight.unsqueeze(0).expand(...)
+        combined = torch.cat([prompt_embeds, input_embeds], dim=1)
+        # ... rest of forward pass
+```
+
+**Injection point:** Embedding layer (before first transformer block)
+
+---
+
+# Methods Summary
+
+| Method | What's Trainable | Where Injected | Params (%) |
+|--------|------------------|----------------|------------|
+| Full FT | All weights + biases | Everywhere | 100% |
+| BitFit | All bias terms | Every layer bias | 0.095% |
+| BitFit Subset | Query + Intermediate bias | Attention + FFN | 0.043% |
+| LoRA | Low-rank A, B matrices | Q, V projections | 0.27% |
+| Prompt Tuning | Virtual token embeddings | Before input | 0.015% |
+
+All PEFT methods also train the **classification head**
+
+---
+
+<!-- _class: lead -->
+# Part 2: Experimental Design
+
+---
+
+# Tasks & Datasets
+
+## GLUE Benchmark
+
+| Task | Type | Train Size | Nature |
+|------|------|------------|--------|
+| **SST-2** | Sentiment | 67K | Simple binary classification |
+| **MRPC** | Paraphrase | 3.7K | Medium complexity |
+| **RTE** | Entailment | 2.5K | Hard + small dataset |
+
+## SQuAD v1.1
+
+| Task | Type | Train Size | Nature |
+|------|------|------------|--------|
+| **SQuAD** | QA (extractive) | 88K | Span extraction |
+
+Used for **low-data scaling experiments** (500 → 88K samples)
+
+---
+
+# Metrics
+
+| Task | Primary Metric | Secondary | Note |
+|------|----------------|-----------|------|
+| SST-2 | Accuracy | — | Binary classification |
+| MRPC | F1 Score | Accuracy | Class imbalance |
+| RTE | Accuracy | — | Binary entailment |
+| SQuAD | Exact Match | F1 Score | Token-level overlap |
+
+**Higher is always better** for all metrics
+
+---
+
+# Training Protocol: GLUE
+
+| Setting | Value | Setting | Value |
+|---------|-------|---------|-------|
+| Epochs | 3 | Warmup | 10% of steps |
+| Batch size | 16 | Precision | FP16 |
+| Max seq length | 128 | Seed | 42 |
+
+**Per-method learning rates** (tuned individually):
+
+| Method | LR | Method | LR |
+|--------|-----|--------|-----|
+| Full FT | `2e-5` | LoRA | `2e-4` |
+| BitFit / Subset | `5e-4` | Prompt Tuning | `5e-4` |
+
+No early stopping — fixed 3 epochs for all methods
+
+---
+
+# Training Protocol: SQuAD Scaling
+
+**Challenge:** Dataset size varies 500 → 88K samples
+
+Fixed epochs → small datasets get very few optimization steps
+
+**Solution:** Step-based training with minimum floor
+
+```bash
+steps = max(2000, dataset_size / batch_size × 5)
+```
+
+| Train Size | Steps | Train Size | Steps |
+|------------|-------|------------|-------|
+| 500 | 2,000 | 10,000 | 3,125 |
+| 1,000 | 2,000 | 20,000 | 6,250 |
+| 5,000 | 2,000 | 88,524 | 15,000 |
+
+---
+
+# Methodological Pitfall We Fixed
+
+Initial runs used **fixed epochs** → small datasets got too few steps
+
+| Train Size | Epochs | Steps | Problem |
+|------------|--------|-------|---------|
+| 1,000 | 2 | 125 | Severe under-training |
+| 88,524 | 2 | 11,065 | OK |
+
+**Why it matters:** BitFit needs more iterations (smaller updates per step)
+
+**Impact of fix at 1K samples:**
+- Before: BitFit F1 = 14.7%
+- After: BitFit F1 = **59.3%** (+44.6%!)
+
+---
+
+<!-- _class: lead -->
+# Part 3: GLUE Results
+
+---
+
+# GLUE Results
+
+| Method | SST-2 (Acc) | MRPC (F1) | RTE (Acc) | Avg | Train % |
+|--------|-------------|-----------|-----------|-----|---------|
 | **Full FT** | **92.09%** | **90.02%** | **67.51%** | **83.21%** | 100% |
 | LoRA | 92.20% | 88.32% | 61.01% | 80.51% | 0.27% |
 | BitFit | 90.60% | 88.01% | 61.37% | 79.99% | 0.095% |
@@ -151,133 +396,92 @@ All PEFT methods achieve **~50% memory reduction** compared to Full FT
 
 ---
 
-# Part I: Key Observations
+# Performance vs Parameters
 
-1. **Full FT dominates** across all tasks (as expected)
+![center width:950px](outputs/parameter_efficiency.png)
 
-2. **LoRA is competitive** — matches/exceeds Full FT on SST-2
-
-3. **BitFit performs well** — ~96-98% of Full FT with only 0.095% params
-
-4. **Task complexity matters:**
-   - SST-2 (simple): All methods ~88-92%
-   - MRPC (medium): Larger gap appears
-   - RTE (hard/small): Biggest gap — 67.5% vs ~57-61%
+- **LoRA:** Best trade-off — near Full FT with 0.27% params
+- **BitFit:** Solid performance with only 0.095% params
 
 ---
 
-# Part I: Parameter Efficiency
+# GLUE: Per-Task Analysis
 
-![center width:900px](outputs/parameter_efficiency.png)
+## Task Complexity Matters
+
+| Task | Observation |
+|------|-------------|
+| **SST-2** (easy) | All methods 88-92% — PEFT sufficient |
+| **MRPC** (medium) | Gap appears: 90% → 82-88% |
+| **RTE** (hard/small) | Biggest gap: 67.5% → 57-61% |
+
+## Key Insight
+
+> Simple tasks: PEFT ≈ Full FT
+> Hard tasks: Full FT pulls ahead
+
+RTE is both **hard** (entailment) and **small** (2.5K samples) — double challenge
 
 ---
 
-# Part I: FLOPs Comparison
-
-![center width:900px](outputs/flops_comparison.png)
-
----
-
-# Part I: Results Visualization
+# GLUE Results Visualization
 
 ![center width:1000px](outputs/part1_results.png)
 
 ---
 
-# Part II: SQuAD Data-Size Experiments
+# Memory & Compute
 
-## Hypothesis
+![center width:950px](outputs/flops_comparison.png)
 
-> **BitFit should avoid overparametrization and perform better or on par with Full FT when training data is limited.**
-
-**Rationale:** With 0.095% vs 100% trainable parameters, BitFit should:
-- Be less prone to overfitting on small datasets
-- Achieve better generalization with limited data
-- Eventually converge to similar performance as data increases
+**All PEFT methods achieve ~50% peak memory reduction**
 
 ---
 
-# Part II: Experiment Setup
-
-- **Task:** SQuAD v1.1 (Question Answering)
-- **Methods:** Full FT vs BitFit
-- **Train Sizes:** 500, 1K, 2K, 3K, 5K, 7K, 10K, 15K, 20K, 88.5K (full)
-- **Training:** Fixed number of steps (2000 for small datasets, proportionally more for larger), batch size 12
-
-**Key:** Equal training steps ensures proper convergence across all dataset sizes
+<!-- _class: lead -->
+# Part 4: SQuAD Low-Data Results
 
 ---
 
-# Part II: ⚠️ Note on Previous Results
+# SQuAD Scaling: The Hypothesis
 
-In our initial experiments, we made a **methodological error**: we used the same number of epochs for all dataset sizes. Smaller datasets saw far fewer training steps → poor convergence for BitFit.
+> **Does BitFit avoid overparameterization and beat Full FT in low-data regimes?**
 
-**Previous (flawed) results — too few steps for small datasets:**
+## Rationale
 
-| Train Size | Full FT (EM) | Full FT (F1) | BitFit (EM) | BitFit (F1) | Δ F1 |
-|------------|--------------|--------------|-------------|-------------|------|
-| 1,000 | 20.52% | 31.71% | 7.13% | 14.72% | **-16.99%** |
-| 5,000 | 56.73% | 67.75% | 38.00% | 50.90% | **-16.85%** |
-| 10,000 | 66.54% | 76.71% | 50.32% | 62.64% | **-14.07%** |
+| Full FT | BitFit |
+|---------|--------|
+| 109M trainable params | 104K trainable params |
+| High capacity → overfitting risk | Low capacity → implicit regularization |
+| Needs more data to generalize | Should generalize better with less data |
 
----
-
-# Part II: Fixed Methodology
-
-After fixing the training steps (equal steps across all sizes), BitFit performance improved significantly on small datasets.
-
-**Key insight:** The flawed methodology unfairly penalized BitFit because:
-- BitFit needs more iterations to converge (fewer params = smaller updates)
-- With fixed epochs, small datasets = very few steps
-- BitFit couldn't converge properly
+**Expected:** BitFit wins with <N samples, Full FT wins with >N samples
 
 ---
 
-# Part II: Results (F1 Score) — Corrected
+# SQuAD Results: F1 Score
 
-| Train Size | Full FT (F1) | BitFit (F1) | Δ F1 |
-|------------|--------------|-------------|------|
-| 500 | 45.54% | 55.31% | **+9.77%** |
-| 1,000 | 54.08% | 59.32% | **+5.24%** |
-| 2,000 | 63.03% | 62.31% | -0.72% |
-| 3,000 | 67.78% | 63.15% | -4.63% |
-| 5,000 | 73.96% | 62.80% | -11.16% |
-| 7,000 | 76.17% | 64.46% | -11.71% |
-| 10,000 | 79.36% | 67.89% | -11.47% |
-| 15,000 | 81.44% | 70.69% | -10.75% |
-| 20,000 | 83.04% | 72.34% | -10.70% |
-| 88,524 (full) | 88.01% | 76.77% | -11.24% |
+| Train Size | Full FT | BitFit | Δ F1 | Winner |
+|------------|---------|--------|------|--------|
+| **500** | 45.5% | 55.3% | **+9.8%** | BitFit ✓ |
+| **1,000** | 54.1% | 59.3% | **+5.2%** | BitFit ✓ |
+| **2,000** | 63.0% | 62.3% | -0.7% | Tie |
+| 3,000 | 67.8% | 63.2% | -4.6% | Full FT |
+| 5,000 | 74.0% | 62.8% | -11.2% | Full FT |
+| 10,000 | 79.4% | 67.9% | -11.5% | Full FT |
+| 88,524 | 88.0% | 76.8% | -11.2% | Full FT |
 
----
-
-# Part II: Results (Exact Match) — Corrected
-
-| Train Size | Full FT (EM) | BitFit (EM) | Δ EM |
-|------------|--------------|-------------|------|
-| 500 | 34.45% | 42.10% | **+7.65%** |
-| 1,000 | 42.71% | 46.53% | **+3.82%** |
-| 2,000 | 51.19% | 49.78% | -1.41% |
-| 3,000 | 56.37% | 51.14% | -5.23% |
-| 5,000 | 63.37% | 50.72% | -12.65% |
-| 7,000 | 66.20% | 52.78% | -13.42% |
-| 10,000 | 69.36% | 56.52% | -12.84% |
-| 15,000 | 72.10% | 59.38% | -12.72% |
-| 20,000 | 73.71% | 61.27% | -12.44% |
-| 88,524 (full) | 80.74% | 65.94% | -14.80% |
+**Crossover: ~2K samples** — BitFit wins below, Full FT wins above
 
 ---
 
-# Part II: Results Visualization
+# SQuAD Scaling Curves
 
 ![center width:1000px](outputs/part2_results.png)
 
 ---
 
-# Part II: Key Finding
-
-## BitFit Outperforms Full FT at Very Low Data!
-
-**The hypothesis is PARTIALLY confirmed:**
+# Key Finding: BitFit Wins in Extreme Low-Data
 
 | Data Regime | Winner | Gap |
 |-------------|--------|-----|
@@ -285,28 +489,99 @@ After fixing the training steps (equal steps across all sizes), BitFit performan
 | ~2K samples | Tie | ~0% |
 | ≥3K samples | **Full FT** | ~11% F1 |
 
+## Why Does This Happen?
+
+1. **Full FT overfits** with 109M params on 500-1K samples
+2. **BitFit's constraint** acts as strong regularization
+3. At ~2K: Both methods have enough signal
+4. Beyond 3K: Full FT's capacity advantage kicks in
+
 ---
 
-# Part II: Conclusion
+# Interpretation
 
-**BitFit wins in extreme low-data regimes!** This supports the overparametrization hypothesis:
+## Why BitFit Wins in Low-Data
 
-1. **At 500 samples:** BitFit F1: 55.31% vs Full FT F1: 45.54% (**+9.77%**)
-2. **At 1,000 samples:** BitFit F1: 59.32% vs Full FT F1: 54.08% (**+5.24%**)
-3. **Crossover point ~2K samples:** Methods converge
-4. **Beyond 3K:** Full FT dominates with consistent ~11% F1 advantage
+**Not learning new features — selecting existing ones**
 
-Full FT overfits on very small datasets, while BitFit's parameter constraint acts as **regularization**.
+- Pretrained BERT already has rich representations
+- Bias shifts **recalibrate** which features activate
+- With tiny data: better to reweight than relearn
+
+## Why Full FT Eventually Wins
+
+- More data → less overfitting risk
+- Full FT can learn **task-specific features**
+- Capacity becomes an advantage, not a liability
+
+---
+
+# Practical Decision Rule
+
+| Data Size | Recommendation |
+|-----------|----------------|
+| **≤1K** | Use **BitFit** — Full FT will overfit |
+| **1K–3K** | Try **BitFit or LoRA** — experiment |
+| **≥3K** | Use **Full FT** (or LoRA if constrained) |
+
+| If You Need... | Use |
+|----------------|-----|
+| Minimal params | Prompt Tuning (0.015%) |
+| Best performance | LoRA (0.27%) |
+| Simplest code | BitFit (0.095%) |
+| Low-data robustness | BitFit |
+
+---
+
+<!-- _class: lead -->
+# Part 5: Takeaways
+
+---
+
+# Key Takeaways
+
+1. **PEFT methods work** — achieve 96-98% of Full FT with <1% parameters
+
+2. **LoRA offers best trade-off** — competitive performance at 0.27% params
+
+3. **BitFit shines in low-data** — outperforms Full FT with ≤1K samples
+
+4. **Task complexity matters** — simple tasks benefit most from PEFT
+
+5. **Memory savings are real** — ~50% reduction across all PEFT methods
+
+---
+
+# What We Learned
+
+## About Low-Data Fine-Tuning
+
+> When data is scarce, **parameter constraints = regularization**
+
+The crossover point (~2K samples) is surprisingly early
+
+## What We Recommend
+
+- **Default choice:** LoRA — good balance of performance and efficiency
+- **Extreme constraints:** BitFit — simpler, fewer params, low-data advantage
+- **Plenty of data:** Full FT still wins
 
 ---
 
 # Summary
 
-## Key Takeaways
+| Claim | Supported? |
+|-------|------------|
+| PEFT ≈ Full FT performance | ✓ 96-98% |
+| BitFit wins in low-data | ✓ ≤1K samples |
+| PEFT saves memory | ✓ ~50% reduction |
+| Task complexity matters | ✓ RTE vs SST-2 |
 
-1. **PEFT methods work** — achieve ~96-98% of Full FT with <1% parameters
-2. **LoRA best trade-off** — competitive performance with 0.27% params
-3. **BitFit shines in low-data** — outperforms Full FT with ≤1K samples
-4. **Task complexity matters** — simple tasks benefit more from PEFT
-5. **Memory savings** — all PEFT methods reduce memory by ~50%
+**Reproducibility:** Hydra configs, W&B tracking, fixed seed, single GPU (FP16)
 
+---
+
+<!-- _class: lead -->
+# Thank You
+
+### Questions?
